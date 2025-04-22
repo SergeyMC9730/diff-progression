@@ -1118,7 +1118,9 @@ class $modify(HPlayLayer, PlayLayer) {
 	    LPGlobal::state.std_dif = LevelProgressionState::SDEasy;
 		LPGlobal::state.demon_dif = LevelProgressionState::SDDNone;
 		LevelProgressionPopup::create()->show();
-		CCDirector::get()->getOpenGLView()->showCursor(true);
+#ifdef _WIN32
+        CCDirector::get()->getOpenGLView()->showCursor(true);
+#endif
 	}
 
 	void beginGameover() {
