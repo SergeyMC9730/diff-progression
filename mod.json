@@ -1,0 +1,46 @@
+{
+  "geode": "4.3.0",
+  "gd": {
+    "win": "2.2074",
+    "android": "2.2074",
+    "mac": "2.2074",
+    "ios": "2.2074"
+  },
+  "id": "dogotrigger.level_progression",
+  "name": "Difficulty Progression",
+  "version": "v1.0.0",
+  "developer": "dogotrigger",
+  "description": "Difficulty increases as you play levels",
+  "settings": {
+    "lives": {
+      "type": "int",
+      "default": 20,
+      "min": 1,
+      "max": 1000,
+      "description": "Sets an amount of lives available while playing levels.",
+      "name": "Lives"
+    },
+    "levels-per-diff": {
+      "type": "int",
+      "default": 2,
+      "min": 1,
+      "max": 200,
+      "description": "Sets an amount of levels per one difficilty.",
+      "name": "Levels Per Difficulty"
+    },
+    "reset-lives-after-quit": {
+      "type": "bool",
+      "default": false,
+      "description": "Allows mod to reset lives after quit from the minigame.",
+      "name": "Reset Lives After Quit"
+    }
+  },
+  "dependencies": [
+    { "id": "geode.node-ids", "importance": "required", "version": ">=1.17.0" }
+  ],
+  "resources": {
+    "spritesheets": {
+      "DiffSheet": ["resources/*.png"]
+    }
+  }
+}
