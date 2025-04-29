@@ -496,7 +496,7 @@ public:
     }
 
     void updateTitle() {
-        if (_filesDownloaded == _filesTotal) {
+        if (_filesDownloaded >= _filesTotal) {
             setTitle("Difficulty Progression");
         } else {
             std::string title = fmt::format("Downloading files ({}/{} done)", _filesDownloaded, _filesTotal);
@@ -602,6 +602,9 @@ public:
             // musman->downloadSFX(id);
 
             _filesTotal++;
+        }
+        if (effects.size() != 0) {
+            _filesTotal--;
         }
 
         if (_filesTotal != 0) {
@@ -935,6 +938,7 @@ public:
         m->addChild(LevelProgressionLives::create(st));
         m->updateLayout();
         m->setPosition({0, m->getContentHeight() / 2 + 8.f});
+        m->setTouchPriority(-1000);
         btn->setVisible(false);
         _playBtn = btn;
 
@@ -1318,16 +1322,37 @@ class $modify(EndLevelLayer) {
     }
 };
 
-class $modify(CCBlockLayer) {
+class $modify(LPBlock, CCBlockLayer) {
+    void onSkip(CCObject *) {
+        int cost = Mod::get()->getSettingValue<int>("skip-cost");
+
+        if ((LPGlobal::state.lives - cost) <= 0) {
+            FLAlertLayer::create("Error", "You <cr>don't have enough lives</c> to <cy>skip</c> this level.", "OK")->show();
+            return;
+        }
+
+        LPGlobal::state.lives -= cost;
+        LevelProgressionPopup::create()->animateIn();
+    }
+
     bool init() {
         CCBlockLayer::init();
 
-        // if (LPGlobal::state.beganGameover) {
-        //     this->setVisible(false);
-        //     this->setTouchEnabled(false);
-        //     this->setKeypadEnabled(false);
-        //     this->setKeyboardEnabled(false);
-        // }
+        if (!LPGlobal::state.began) return true;
+
+        CCNode *left_side = getChildByIDRecursive("left-button-menu");
+        if (!left_side) {
+            log::error("cannot place skip button");
+            return true;
+        }
+
+        ButtonSprite *spr = ButtonSprite::create("Skip");
+        spr->setScale(0.8f);
+
+        CCMenuItemSpriteExtra *i = CCMenuItemSpriteExtra::create(spr, spr, menu_selector(LPBlock::onSkip));
+
+        left_side->addChild(i);
+        left_side->updateLayout();
 
         return true;
 

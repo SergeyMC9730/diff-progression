@@ -32,6 +32,13 @@
       "default": false,
       "description": "Allows mod to reset lives after quit from the minigame.",
       "name": "Reset Lives After Quit"
+    },
+    "skip-cost": {
+      "type": "int",
+      "default": 10,
+      "min": 0,
+      "description": "Sets an amount of lives to be lost when skipping any level.",
+      "name": "Cost of Skip"
     }
   },
   "dependencies": [
