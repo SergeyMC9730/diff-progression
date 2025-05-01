@@ -7,7 +7,7 @@
   },
   "id": "dogotrigger.level_progression",
   "name": "Difficulty Progression",
-  "version": "v1.0.0",
+  "version": "v1.0.1",
   "developer": "dogotrigger",
   "description": "Difficulty increases as you play levels",
   "settings": {
