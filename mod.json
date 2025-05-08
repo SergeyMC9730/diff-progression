@@ -7,7 +7,7 @@
   },
   "id": "dogotrigger.level_progression",
   "name": "Difficulty Progression",
-  "version": "v1.0.1",
+  "version": "v1.0.2",
   "developer": "dogotrigger",
   "description": "Difficulty increases as you play levels",
   "settings": {
@@ -39,6 +39,24 @@
       "min": 0,
       "description": "Sets an amount of lives to be lost when skipping any level.",
       "name": "Cost of Skip"
+    },
+    "update-diff-after-skip": {
+      "type": "bool",
+      "default": false,
+      "description": "Allows mod to set difficulty for the next level after skip.",
+      "name": "Update Difficulty After Skip"
+    },
+    "debug-mode": {
+      "type": "bool",
+      "default": false,
+      "description": "Enables debug mode. Expect a lot of output in terminal.",
+      "name": "Debug Mode"
+    },
+    "reset-previous-seed": {
+      "type": "bool",
+      "default": true,
+      "description": "After you change seed mod automatically resets previous one. This behaviour can be disabled.",
+      "name": "Reset Previous Seed"
     }
   },
   "dependencies": [

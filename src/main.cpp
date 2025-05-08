@@ -1,19 +1,3 @@
-#include "GUI/CCControlExtension/CCScale9Sprite.h"
-#include "Geode/cocos/CCDirector.h"
-#include "Geode/cocos/actions/CCActionEase.h"
-#include "Geode/cocos/actions/CCActionInstant.h"
-#include "Geode/cocos/actions/CCActionInterval.h"
-#include "Geode/cocos/cocoa/CCObject.h"
-#include "Geode/cocos/label_nodes/CCLabelBMFont.h"
-#include "Geode/cocos/layers_scenes_transitions_nodes/CCLayer.h"
-#include "Geode/cocos/menu_nodes/CCMenuItem.h"
-#include "Geode/cocos/platform/CCPlatformMacros.h"
-#include "Geode/ui/BasedButtonSprite.hpp"
-#include "Geode/ui/Layout.hpp"
-#include "Geode/ui/Popup.hpp"
-#include "Geode/ui/TextInput.hpp"
-#include "Geode/utils/string.hpp"
-#include "ccTypes.h"
 #include <Geode/Geode.hpp>
 #include <Geode/binding/CreatorLayer.hpp>
 #include <Geode/modify/CreatorLayer.hpp>
@@ -23,6 +7,8 @@
 #include <Geode/modify/EndLevelLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
 #include <nlohmann/json.hpp>
+
+static bool LPDEBUG = false;
 
 class LoadingCircleLayer : public cocos2d::CCLayer {
 public:
@@ -73,6 +59,8 @@ protected:
 
     geode::EventListener<geode::utils::web::WebTask> _listener;
 
+    bool _readyToProcessNext = true;
+
     void setupListener();
 public:
     GeodeNetwork();
@@ -91,6 +79,10 @@ public:
     }
 
     void send();
+
+    bool readyToProcessNext() const {
+        return _readyToProcessNext;
+    }
 };
 
 void GeodeNetwork::setOkCallback(std::function<void(GeodeNetwork *)> ok) {
@@ -112,6 +104,8 @@ std::string &GeodeNetwork::getResponse() {
 }
 
 void GeodeNetwork::send() {
+    _readyToProcessNext = false;
+
     geode::utils::web::WebRequest req = geode::utils::web::WebRequest();
 
     req.timeout(std::chrono::seconds(10));
@@ -120,6 +114,8 @@ void GeodeNetwork::send() {
 
     if (_method == MGet) {
         task = req.get(_url);
+    } else {
+        log::error("GeodeNetwork: unknown method {}", (int)_method);
     }
 
     _listener.setFilter(task);
@@ -132,7 +128,9 @@ GeodeNetwork::GeodeNetwork() {
 void GeodeNetwork::setupListener() {
     _listener.bind([this] (geode::utils::web::WebTask::Event* e) {
         if (geode::utils::web::WebResponse* res = e->getValue()) {
-            this->_data = res->string().unwrapOr("Not a string");
+            this->_data = res->string().unwrapOr("GeodeNetwork.NotAString");
+
+            _readyToProcessNext = true;
 
             // log::info("_data = {}", this->_data);
 
@@ -148,7 +146,11 @@ void GeodeNetwork::setupListener() {
                 return;
             }
         } else if (e->isCancelled()) {
-            this->_data = "Error: cancelled";
+            _readyToProcessNext = true;
+
+            log::warn("GeodeNetwork: got cancelled request");
+
+            this->_data = "GeodeNetwork.Cancelled";
 
             if (this->_onError != nullptr) {
                 this->_onError(this);
@@ -190,8 +192,6 @@ public:
     LevelCell *cell = nullptr;
     GJGameLevel *level = nullptr;
 
-    bool in_playlayer = false;
-
     bool began = false;
 
     std::string seed = "";
@@ -207,10 +207,10 @@ public:
     void init() {
         if (lives <= -255) {
             lives = Mod::get()->getSettingValue<int>("lives");
-            log::info("{} lives avaiable", lives);
+            if (LPDEBUG) log::info("{} lives avaiable", lives);
         }
         lpd = Mod::get()->getSettingValue<int>("levels-per-diff");
-        log::info("{} levels per difficulty", lpd);
+        if (LPDEBUG) log::info("{} levels per difficulty", lpd);
         initNet();
     }
 };
@@ -222,6 +222,8 @@ namespace LPGlobal {
     struct LevelProgressionState state = {};
     LevelProgressionLives *overlay = nullptr;
     LevelProgressionPopup *curPopup = nullptr;
+
+    std::string seed = "";
 
     bool applyBounceAnimate(cocos2d::CCNode *node, float power) {
         if (node == nullptr /*|| node->getActionByTag(0x1000) != nullptr || node->getActionByTag(0x2000) != nullptr*/ || power <= 0.f) {
@@ -247,6 +249,31 @@ namespace LPGlobal {
 
         return true;
     }
+
+    void showIngame(CCNode *n);
+
+    void resetCurrentSeed() {
+        auto st = &LPGlobal::state;
+
+        if (st->net != nullptr) {
+            std::string url = "https://www.dogotrigger.ru/lp/reset";
+            url += "?user_id=" + std::to_string(GameManager::get()->m_playerUserID);
+            url += "&seed=" + LPGlobal::seed;
+
+            if (LPDEBUG) log::info("url={}", url);
+
+            st->net->setURL(url);
+            st->net->setMethod(GeodeNetwork::MGet);
+            st->net->setOkCallback([st](GeodeNetwork*net) {
+               if (LPDEBUG) log::info("ok response = {}", net->getResponse());
+               net->unsetCallbacks();
+            });
+            st->net->setErrorCallback([](GeodeNetwork*net) {
+                net->unsetCallbacks();
+            });
+            st->net->send();
+        }
+    }
 }
 
 #define PARSE_STRING(lvalue, rvalue) if (!rvalue.is_null()) lvalue = rvalue.get<std::string>().c_str()
@@ -264,8 +291,8 @@ private:
     CCScale9Sprite *_bg;
 public:
     LevelProgressionState *getState() {
-        log::info("lives: getstate: {}", (void *)_state);
-        return _state;
+        if (LPDEBUG) log::info("lives: getstate: {}", (void *)_state);
+        return &LPGlobal::state;
     }
 
     bool init(LevelProgressionState *state) {
@@ -410,16 +437,17 @@ protected:
     geode::TextInput *_seedInput = nullptr;
     LevelProgressionState *_prState = nullptr;
     std::string _inputBefore = "";
+    bool _timerScheduled = false;
 public:
     bool setup(LevelProgressionState *state) override {
         setTitle("Set Seed");
         m_mainLayer->setID("main-layer");
 
         if (state == nullptr) {
-            log::info("state is nullptr");
+            log::error("state is nullptr");
             return true;
         } else {
-            log::info("randpopup: state: {}", (void *)state);
+            if (LPDEBUG) log::info("randpopup: state: {}", (void *)state);
         }
 
         _prState = state;
@@ -429,12 +457,12 @@ public:
             _seedInput->setString(_prState->seed);
         }
         _seedInput->setFilter("0123456789");
-        _seedInput->setCallback([state](const std::string &i) {
-            log::info("setting {} to {}", state->seed, i);
-            state->seed = i;
-            state->seedSet = true;
-            log::info("result: {}", state->seed);
-        });
+        // _seedInput->setCallback([state](const std::string &i) {
+        //     if (LPDEBUG) log::info("setting {} to {}", state->seed, i);
+        //     state->seed = i;
+        //     state->seedSet = true;
+        //     if (LPDEBUG) log::info("result: {}", state->seed);
+        // });
         _seedInput->getInputNode()->setTouchPriority(-1500);
         _seedInput->getInputNode()->m_selected = true;
         setTouchPriority(-1500);
@@ -458,40 +486,92 @@ public:
     }
 
     LevelProgressionState *getState() {
-        log::info("randpopup: getstate: {}", (void *)_prState);
-        return _prState;
+        return &LPGlobal::state;
     }
 
     CCSize getRealContentSize() {
         return m_mainLayer->getContentSize();
     }
 
+    void checkIfNetIsReady(float);
     void onClose(cocos2d::CCObject*o) override;
+
+    void leave();
 };
 
 class LevelProgressionPopup : public geode::Popup<>, public MusicDownloadDelegate {
 protected:
-    CCMenuItemSpriteExtra *_playBtn;
-    LoadingCircleLayer *_circle;
+    CCMenuItemSpriteExtra *_playBtn = nullptr;
+    CCMenuItemSpriteExtra *_beginBtn = nullptr;
+    LoadingCircleLayer *_circle = nullptr;
     CCMenu *_buttons = nullptr;
     CustomSongWidget *_widget = nullptr;
     std::string _cachedLevelString = "";
     LevelCell *_currentCell = nullptr;
 
     std::vector<CCNode*> _extraNodes = {};
+    std::map<CCNode*, bool> _hideTable = {};
+    bool _buttonsManuallyHidden = false;
 
     int _filesTotal = 0;
     int _filesDownloaded = 0;
 public:
+    void validateBtns() {
+        if (!_playBtn) {
+            _playBtn = (CCMenuItemSpriteExtra *)getChildByIDRecursive("play-btn");
+            log::warn("tried to fix _playBtn address");
+        }
+        if (!_beginBtn) {
+            _beginBtn = (CCMenuItemSpriteExtra *)getChildByIDRecursive("begin-btn");
+            log::warn("tried to fix _beginBtn address");
+        }
+    }
+    void hideBeginBtn() {
+        validateBtns();
+
+        if (_playBtn) _playBtn->setVisible(false);
+        else log::error("_playBtn is null");
+        if (_beginBtn) _beginBtn->setVisible(false);
+        else log::error("_beginBtn is null");
+        _buttonsManuallyHidden = true;
+    }
+    void showBeginBtn() {
+        validateBtns();
+
+        if (_playBtn) {
+            if (_hideTable.contains(_playBtn)) {
+                if (!_hideTable[_playBtn]) {
+                    _playBtn->setVisible(true);
+                }
+            } else {
+                if (_beginBtn && !_beginBtn->isVisible()) {
+                    _playBtn->setVisible(true);
+                }
+            }
+        }
+        if (_beginBtn) {
+            if (_hideTable.contains(_beginBtn)) {
+                if (!_hideTable[_beginBtn]) {
+                    _beginBtn->setVisible(true);
+                }
+            } else {
+                _beginBtn->setVisible(true);
+            }
+        }
+        _buttonsManuallyHidden = false;
+    }
+
     void onClose(cocos2d::CCObject*o) override {
         if (PlayLayer::get() == nullptr) {
             auto st = getState();
             st->clickedBegin = false;
             st->began = false;
-            st->net->unsetCallbacks();
+
+            LPGlobal::resetCurrentSeed();
         } else {
             return;
         }
+        LPGlobal::curPopup = nullptr;
         geode::Popup<>::onClose(o);
     }
 
@@ -510,39 +590,65 @@ public:
     }
 
     void downloadSongFinished(int id) override {
-        log::info("{} has been downloaded", id);
+        if (LPDEBUG) log::info("{} has been downloaded", id);
         increaseDownloadedStat();
     }
     void downloadSongFailed(int id, GJSongError p1) override {
-        log::info("{} could not be downloaded: {}", id, (int)p1);
+        log::error("{} could not be downloaded: {}", id, (int)p1);
         increaseDownloadedStat();
         setTitle("Song download error");
     }
     void downloadSFXFinished(int id) override {
-        log::info("{} (SFX) has been downloaded", id);
+        if (LPDEBUG) log::info("{} (SFX) has been downloaded", id);
         increaseDownloadedStat();
     }
     void downloadSFXFailed(int id, GJSongError p1) override {
-        log::info("{} (SFX) could not be downloaded: {}", id, (int)p1);
+        log::error("{} (SFX) could not be downloaded: {}", id, (int)p1);
         increaseDownloadedStat();
         setTitle("SFX download error");
     }
 
     void waitForMusicInfo(float) {
-        // schedule(schedule_selector(LevelProgressionPopup::waitForMusicInfo), 0.5f);
+        if (!_widget) return;
 
-        if (!_widget || !_widget->m_downloadBtn->isVisible()) return;
-        log::info("DOWNLOADING CONTENT");
+        auto label = _widget->m_errorLabel;
+        if (label) {
+            std::string s = label->getString();
+            if (s.starts_with("not")) {
+                setTitle(s);
+                unschedule(schedule_selector(LevelProgressionPopup::waitForMusicInfo));
+                return;
+            }
+        }
+
+        if (!_widget->m_downloadBtn->isVisible()) return;
+
+        if (LPDEBUG) log::info("DOWNLOADING CONTENT");
+
+        if (_widget->m_songs.size() != 0 || _widget->m_sfx.size() != 0) {
+            _filesTotal = 0;
+            for (auto [id, downloaded] : _widget->m_songs) {
+                if (downloaded) continue;
+                _filesTotal++;
+            }
+            for (auto [id, downloaded] : _widget->m_sfx) {
+                if (downloaded) continue;
+                _filesTotal++;
+            }
+            updateTitle();
+        }
+
         _widget->m_downloadBtn->activate();
+
         unschedule(schedule_selector(LevelProgressionPopup::waitForMusicInfo));
     }
 
     void processOnDownloaed() {
-        log::info("processing downloaded level");
+        if (LPDEBUG) log::info("processing downloaded level");
         auto glm = GameLevelManager::get();
         auto st = getState();
         auto saved = glm->getSavedLevel(st->level->m_levelID);
-        log::info("1={} 2={}", saved->m_levelString, st->level->m_levelString);
+        // if (LPDEBUG) log::info("1={} 2={}", saved->m_levelString, st->level->m_levelString);
         _cachedLevelString = saved->m_levelString;
 
         saved->m_creatorName = st->level->m_creatorName;
@@ -550,7 +656,7 @@ public:
         std::string lstr = st->level->m_levelString;
         st->level = saved;
         if (!lstr.empty() && st->level->m_levelString.empty()) {
-            log::info("replacing {} with {}", st->level->m_levelString, lstr);
+            if (LPDEBUG) log::info("replacing {} with {}", st->level->m_levelString, lstr);
             st->level->m_levelString = lstr;
         }
         glm->saveLevel(st->level);
@@ -570,7 +676,7 @@ public:
             effects.push_back(std::stoi(id));
         }
 
-        log::info("song_list={} songs_size={} sfx_size={}", st->level->m_songIDs, vs.size(), vs2.size());
+        if (LPDEBUG) log::info("song_list={} songs_size={} sfx_size={}", st->level->m_songIDs, vs.size(), vs2.size());
 
         auto musman = MusicDownloadManager::sharedState();
         bool added_as_delegate = false;
@@ -582,7 +688,7 @@ public:
                 added_as_delegate = true;
             }
 
-            log::info("downloading {}", id);
+            if (LPDEBUG) log::info("downloading {}", id);
             // if (id < 10000000) musman->downloadSong(id);
             // else {
             //     musman->downloadCustomSong(id);
@@ -598,7 +704,7 @@ public:
                 added_as_delegate = true;
             }
 
-            log::info("downloading sfx {}", id);
+            if (LPDEBUG) log::info("downloading sfx {}", id);
             // musman->downloadSFX(id);
 
             _filesTotal++;
@@ -613,9 +719,11 @@ public:
 
         if (st->level->m_levelString.size() < 256) {
             log::error("level string is STILL EMPTY. WTF?");
-
         } else {
-            _playBtn->setVisible(true);
+            if (!_buttonsManuallyHidden) {
+                _playBtn->setVisible(true);
+                _hideTable[_playBtn] = false;
+            }
         }
 
         // This fixes the song being unknown? its weird but it works so who cares
@@ -631,7 +739,7 @@ public:
 
         if (songWidget->m_getSongInfoBtn->isVisible()) {
             songWidget->m_getSongInfoBtn->activate();
-            log::info("getting music info (data is unknown)");
+            if (LPDEBUG) log::info("getting music info (data is unknown)");
         }
         schedule(schedule_selector(LevelProgressionPopup::waitForMusicInfo), 0.5f);
     }
@@ -640,23 +748,23 @@ public:
         auto glm = GameLevelManager::get();
         auto st = getState();
         if (!st->level) {
-            log::info("predownloaded level is nullptr");
+            if (LPDEBUG) log::info("predownloaded level is nullptr");
             return;
         }
         if (glm->hasDownloadedLevel(st->level->m_levelID)) {
             auto level = glm->getSavedLevel(st->level->m_levelID);
             if (!level) {
-                log::info("LEVEL IS NULLPTR. ignoring");
+                if (LPDEBUG) log::info("LEVEL IS NULLPTR. ignoring");
                 return;
             }
-            if (level->m_levelString.size() < 256) {
-                log::info("NO LEVEL STRING. ignoring");
+            if (level->m_levelString.size() < 64) {
+                if (LPDEBUG) log::info("NO LEVEL STRING. ignoring");
                 return;
             }
             processOnDownloaed();
             unschedule(schedule_selector(LevelProgressionPopup::checkDownloaded));
         } else {
-            log::info("not yet");
+            if (LPDEBUG) log::info("not yet");
         }
     }
 
@@ -675,10 +783,11 @@ public:
 
         auto st = getState();
 
-        if (!st->seedSet) {
+        if (true) { // !st->seedSet
             st->seed = std::to_string(seed);
-            log::info("setting seed to {}", st->seed);
+            if (LPDEBUG) log::info("setting seed to {}", st->seed);
             st->seedSet = true;
+            LPGlobal::seed = st->seed;
         }
 
         PARSE_STRING(level->m_levelName, leveljson["levelName"]);
@@ -719,22 +828,10 @@ public:
         level->retain();
 
         auto csz = getRealContentSize();
-        // log::info("1");
-
-        // LevelCell *cell = LevelCell::create(0.f, 0.f);
-        // log::info("2");
-        // cell->loadFromLevel(level);
-        // log::info("3");
-        // cell->setPosition(0, csz.height / 2);
-        // log::info("4");
         LevelCell *cell = new LevelCell("a", 0.f, 0.f);
-        // log::info("2");
         if (!cell->init()) return;
-        // log::info("3");
         cell->autorelease();
-        // log::info("4");
         cell->loadFromLevel(level);
-        // log::info("5");
         cell->setPosition(0, csz.height / 2);
 
         CCLayer *base = typeinfo_cast<CCLayer *>(cell->getChildByID("main-layer"));
@@ -761,7 +858,7 @@ public:
             if (node != nullptr) {
                 node->setPositionY(node->getPositionY() - 4);
             } else {
-                log::info("node at {} is nullptr", idx);
+                log::warn("node at {} is nullptr", idx);
             }
         }
 
@@ -805,41 +902,9 @@ public:
 
         auto glm = GameLevelManager::get();
         GameLevelManager::get()->downloadLevel(st->level->m_levelID, false);
-        // // glm->deleteLevel(glm->getSavedLevel(st->level->m_levelID));
-        // if (!glm->hasDownloadedLevel(st->level->m_levelID)) {
-        //     log::info("level is not downloaded - downloading it");
-            schedule(schedule_selector(LevelProgressionPopup::checkDownloaded), 0.5f);
-            _playBtn->setVisible(false);
-        // } else {
-        //     auto saved = glm->getSavedLevel(st->level->m_levelID);
-        //     saved->m_creatorName = st->level->m_creatorName;
-        //     saved->m_accountID = st->level->m_accountID;
-        //     st->level->m_levelString = saved->m_levelString;
-        //     st->level->m_songIDs = saved->m_songIDs;
-        //     st->level->m_sfxIDs = saved->m_sfxIDs;
-
-        //     // st->level = saved;
-        //     if (st->level->m_levelString.size() < 256) {
-        //         log::info("level has empty level string - downloading it");
-        //         // GameLevelManager::get()->deleteLevel(saved);
-        //         GameLevelManager::get()->downloadLevel(st->level->m_levelID, false);
-        //         schedule(schedule_selector(LevelProgressionPopup::checkDownloaded), 0.5f);
-        //         _playBtn->setVisible(false);
-        //         return;
-        //     } else {
-        //         st->level->m_songIDs = saved->m_songIDs;
-        //         st->level->m_sfxIDs = saved->m_sfxIDs;
-        //     }
-        // }
-        // // log::info("levelString={}", st->level->m_levelString);
-
-        // if (st->level->m_levelString.size() < 256) {
-        //     _playBtn->setVisible(false);
-        //     log::info("level has empty level string (2) - downloading it");
-        //     GameLevelManager::get()->downloadLevel(st->level->m_levelID, false);
-        //     schedule(schedule_selector(LevelProgressionPopup::checkDownloaded), 0.5f);
-        // }
-
+        schedule(schedule_selector(LevelProgressionPopup::checkDownloaded), 0.5f);
+        _playBtn->setVisible(false);
+        _hideTable[_playBtn] = true;
         _currentCell = cell;
         _circle->setVisible(false);
     }
@@ -850,8 +915,19 @@ public:
             _currentCell = nullptr;
         }
 
+        if (!_circle) {
+            _circle = LoadingCircleLayer::create();
+            m_mainLayer->addChildAtPosition(_circle, Anchor::Center);
+        }
         _circle->setVisible(true);
-        if (_playBtn) _playBtn->setVisible(false);
+        if (_playBtn) {
+            _playBtn->setVisible(false);
+            _hideTable[_playBtn] = true;
+        }
+        if (_beginBtn) {
+            _beginBtn->setVisible(false);
+            _hideTable[_beginBtn] = true;
+        }
 
         std::map<LevelProgressionState::Difficulty, std::string> m1 = {
             {LevelProgressionState::SDEasy, "std_easy"},
@@ -870,6 +946,9 @@ public:
 
         auto st = getState();
 
+        st->level = nullptr;
+        st->cell = nullptr;
+
         std::string d = "";
         if (st->demon_dif == LevelProgressionState::DemonDiff::SDDNone) {
             d = m1[st->std_dif];
@@ -883,12 +962,12 @@ public:
             url += "&seed=" + st->seed;
         }
 
-        log::info("url={}", url);
+        if (LPDEBUG) log::info("url={}", url);
 
         st->net->setURL(url);
         st->net->setMethod(GeodeNetwork::MGet);
         st->net->setOkCallback([this, st](GeodeNetwork*net) {
-           log::info("ok response = {}", st->net->getResponse());
+           // if (LPDEBUG) log::info("ok response = {}", st->net->getResponse());
            setupLevelPage(st->net->getResponse());
         });
         st->net->setErrorCallback([this](GeodeNetwork*net) {
@@ -900,6 +979,8 @@ public:
     bool setup() override {
         LPGlobal::curPopup = this;
 
+        LPDEBUG = Mod::get()->getSettingValue<bool>("debug-mode");
+
         setTitle("Difficulty Progression");
         m_mainLayer->setID("main-layer");
         setID("LevelProgressionPopup");
@@ -908,7 +989,7 @@ public:
         st->init();
 
         CCSprite *spr = CCSprite::createWithSpriteFrameName("GJ_optionsBtn02_001.png");
-        CCMenuItemSpriteExtra *e = CCMenuItemSpriteExtra::create(spr, spr, menu_selector(LevelProgressionPopup::onShowSeed));
+        CCMenuItemSpriteExtra *e = CCMenuItemSpriteExtra::create(spr, this, menu_selector(LevelProgressionPopup::onShowSeed));
 
         CCMenu *btns = CCMenu::create();
         btns->setContentSize(getRealContentSize());
@@ -933,29 +1014,33 @@ public:
         auto spr4 = ButtonSprite::create("Play");
         spr4->setScale(0.8f);
 
-        CCMenuItemSpriteExtra *btn = CCMenuItemSpriteExtra::create(spr4, spr4, this, menu_selector(LevelProgressionPopup::playLevel));
+        CCMenuItemSpriteExtra *btn = CCMenuItemSpriteExtra::create(spr4, this, menu_selector(LevelProgressionPopup::playLevel));
         m->addChild(btn);
         m->addChild(LevelProgressionLives::create(st));
         m->updateLayout();
         m->setPosition({0, m->getContentHeight() / 2 + 8.f});
         m->setTouchPriority(-1000);
         btn->setVisible(false);
+        btn->setID("play-btn");
+        _hideTable[btn] = true;
         _playBtn = btn;
 
         if (st->clickedBegin) {
             onClickBegin(nullptr);
         } else {
             auto spr4 = ButtonSprite::create("Begin");
-            CCMenuItemSpriteExtra *btn = CCMenuItemSpriteExtra::create(spr4, spr4, this, menu_selector(LevelProgressionPopup::onClickBegin));
+            CCMenuItemSpriteExtra *btn = CCMenuItemSpriteExtra::create(spr4, this, menu_selector(LevelProgressionPopup::onClickBegin));
             btn->setPosition(getRealContentSize() / 2);
             btns->addChild(btn);
             btns->setTouchPriority(-1000);
+            btn->setID("begin-btn");
+            _beginBtn = btn;
 
             _extraNodes.push_back(btn);
 
             if (!Mod::get()->getSavedValue<bool>("pressed-seed-menu", false)) {
-                auto recommendation = TextArea::create("Before playing you can set a <cy>seed</c>. Check it out!", "chatFont.fnt", 1.f, 240.f, {0.5, 0.5f}, 12.f, false);
-                auto recommendation2 = TextArea::create("Before playing you can set a <cy>seed</c>. Check it out!", "chatFont.fnt", 1.f, 240.f, {0.5, 0.5f}, 12.f, false);
+                auto recommendation = TextArea::create("Before playing you can set a <cy>seed</c>. Check settings!", "chatFont.fnt", 1.f, 240.f, {0.5, 0.5f}, 12.f, false);
+                auto recommendation2 = TextArea::create("Before playing you can set a <cy>seed</c>. Check settings!", "chatFont.fnt", 1.f, 240.f, {0.5, 0.5f}, 12.f, false);
                 auto csz = getRealContentSize();
                 recommendation->setPositionX(csz.width / 2.f);
                 recommendation->setPositionY(csz.height - recommendation->getContentHeight() - 40.f);
@@ -987,7 +1072,6 @@ public:
     }
 
     LevelProgressionState *getState() {
-        log::info("popup: getstate: {} {}", (void *)&LPGlobal::state, (void *)&LPGlobal::state);
         return &LPGlobal::state;
     }
 
@@ -996,23 +1080,27 @@ public:
     }
 
     void onShowSeed(CCObject *sender) {
+        if (LPDEBUG) log::info("onShowSeed({},{})", this, sender);
         Mod::get()->setSavedValue<bool>("pressed-seed-menu", true);
+        hideBeginBtn();
         LevelProgressionRandPopup::create(getState())->show();
     }
     void retryFetch(float d) {
-        log::info("attempting to fetch level again");
+        if (LPDEBUG) log::info("attempting to fetch level again");
         fetchLevel();
     }
     void playLevel(CCObject *) {
         auto st = getState();
 
-        if (!st->cell || !st->level) return;
+        if (!st->cell || !st->level || _cachedLevelString.size() < 64) {
+            Notification::create("Invalid level data found. Report this bug to developer.", NotificationIcon::Error, NOTIFICATION_LONG_TIME)->show();
+            log::error("Invalid level data found. Report this bug to developer.");
+            log::error("These assertion statements can help you:");
+            log::error("_cachedLevelString({}) = {} // st->cell is {} // st->level is {} // seed = {} (isSet={})", _cachedLevelString.size(), _cachedLevelString, st->cell != nullptr, st->level != nullptr, LPGlobal::seed, st->seedSet);
+            return;
+        }
 
-        if (st->level->m_levelString.size() < 256) {
-            log::info("DATA1={}", st->level->m_levelString);
-            std::string s = _cachedLevelString;
-            s.resize(256);
-            log::info("DATA2={}", s);
+        if (st->level->m_levelString.size() < 64) {
             st->level->m_levelString = _cachedLevelString;
         }
 
@@ -1020,8 +1108,9 @@ public:
         LPGlobal::state.lives++;
 
         auto fmod = FMODAudioEngine::get();
-        fmod->stopAllMusic(true);
-        fmod->stopAllEffects();
+        fmod->stop();
+        // fmod->stopAllMusic(true);
+        // fmod->stopAllEffects();
 
         auto musman = MusicDownloadManager::sharedState();
         musman->removeMusicDownloadDelegate(this);
@@ -1030,6 +1119,12 @@ public:
         auto transition = CCTransitionFade::create(0.5f, scene);
 
         CCDirector::sharedDirector()->replaceScene(transition);
+
+        fmod->enableMetering();
+
+#ifdef _WIN32
+        CCDirector::get()->getOpenGLView()->showCursor(false);
+#endif
     }
     void onClickBegin(CCObject*) {
         auto st = getState();
@@ -1044,6 +1139,7 @@ public:
         for (CCNode *nd : _extraNodes) {
             if (!nd) continue;
             nd->setVisible(false);
+            _hideTable[nd] = true;
         }
     }
 
@@ -1064,6 +1160,34 @@ public:
     }
 };
 
+void LPGlobal::showIngame(CCNode *n) {
+    auto node = n->getChildByIDRecursive("EndLevelLayer");
+    if (node) {
+        node->setVisible(false);
+    } else {
+        log::error("could not find endlevellayer");
+    }
+
+    LPGlobal::state.cur_l++;
+    if (LPGlobal::state.cur_l >= LPGlobal::state.lpd) {
+        LPGlobal::state.cur_l = 0;
+
+        int v = (int)LPGlobal::state.std_dif;
+        if (v == LevelProgressionState::SDInsane) {
+            int v2 = (int)LPGlobal::state.demon_dif;
+            if (v2 < LevelProgressionState::SDDExtreme) {
+                v2++;
+                LPGlobal::state.demon_dif = (LevelProgressionState::DemonDiff)v2;
+            }
+        } else {
+            v++;
+            LPGlobal::state.std_dif = (LevelProgressionState::Difficulty)v;
+        }
+    }
+
+    LevelProgressionPopup::create()->animateIn();
+}
+
 class $modify(HPlayLayer, PlayLayer) {
     struct Fields {
 		float player_x_old;
@@ -1083,14 +1207,14 @@ class $modify(HPlayLayer, PlayLayer) {
 	}
 
 	void fixBegan(float d) {
-	    log::info("fixing lp state");
+	    if (LPDEBUG) log::info("fixing lp state");
 	    LPGlobal::state.began = true;
-		LPGlobal::state.in_playlayer = true;
+		LPGlobal::state.clickedBegin = true;
 		LPGlobal::overlay = m_fields->overlay;
 	}
 
 	void onExit() {
-	    log::info("onExit()");
+	    if (LPDEBUG) log::info("playlayer: onExit()");
 
 		PlayLayer::onExit();
 	}
@@ -1128,7 +1252,7 @@ class $modify(HPlayLayer, PlayLayer) {
 	}
 
 	void beginGameover() {
-		log::info("beginGameover()");
+		if (LPDEBUG) log::info("beginGameover()");
 
 		if (LPGlobal::state.beganGameover) return;
 
@@ -1159,60 +1283,33 @@ class $modify(HPlayLayer, PlayLayer) {
 			PlayLayer::resetLevel();
 			int atts2 = this->m_attempts;
 			if (LPGlobal::state.began) {
-   if (atts != atts2) {
-			   LPGlobal::overlay->decreaseLives();
-			}
-			if (LPGlobal::state.lives <= 0) {
-                HPlayLayer *pl = (HPlayLayer*)PlayLayer::get();
-                pl->beginGameover();
-            }
+                if (atts != atts2) {
+                    LPGlobal::overlay->decreaseLives();
+                }
+    			if (LPGlobal::state.lives <= 0) {
+                    HPlayLayer *pl = (HPlayLayer*)PlayLayer::get();
+                    pl->beginGameover();
+                }
 			}
 		}
 	}
-	void resetLevelFromStart() {
-	    log::info("resetLevelFromStart()");
-		PlayLayer::resetLevelFromStart();
-	}
-
-	void fullReset() {
-		log::info("FullReset()");
-		PlayLayer::fullReset();
-	}
+	// void resetLevelFromStart() {
+	//     if (LPDEBUG) log::info("resetLevelFromStart()");
+	// 	PlayLayer::resetLevelFromStart();
+	// }
 
     void showLPLayer() {
-        auto node = getChildByIDRecursive("EndLevelLayer");
-        if (node) {
-            node->setVisible(false);
-        } else {
-            log::error("could not find endlevellayer");
-        }
-
-        LPGlobal::state.cur_l++;
-        if (LPGlobal::state.cur_l >= LPGlobal::state.lpd) {
-            LPGlobal::state.cur_l = 0;
-
-            int v = (int)LPGlobal::state.std_dif;
-            if (v == LevelProgressionState::SDInsane) {
-                int v2 = (int)LPGlobal::state.demon_dif;
-                if (v2 < LevelProgressionState::SDDExtreme) {
-                    v2++;
-                    LPGlobal::state.demon_dif = (LevelProgressionState::DemonDiff)v2;
-                }
-            } else {
-                v++;
-                LPGlobal::state.std_dif = (LevelProgressionState::Difficulty)v;
-            }
-        }
-
-        LevelProgressionPopup::create()->animateIn();
+        LPGlobal::state.clickedBegin = true;
+        LPGlobal::showIngame(this);
         FMODAudioEngine::get()->fadeOutMusic(1.f, 0);
     }
     void showCompleteText() {
         PlayLayer::showCompleteText();
 
-        log::info("{}", LPGlobal::state.began);
+        if (LPDEBUG) log::info("{}", LPGlobal::state.began);
 
         if (!LPGlobal::state.began) return;
+        LPGlobal::state.clickedBegin = true;
 
         auto d = CCDelayTime::create(1.5f);
         auto f = CCCallFunc::create(this, callfunc_selector(HPlayLayer::showLPLayer));
@@ -1231,13 +1328,7 @@ class $modify(HPlayLayer, PlayLayer) {
         } else {
             LPGlobal::overlay = nullptr;
             LPGlobal::state.cell = nullptr;
-            LPGlobal::state.in_playlayer = false;
             LPGlobal::state.began = false;
-            //
-            // scheduleOnce(schedule_selector(HPlayLayer::fixBegan), 3.f);
-            // p1 = false;
-            // p2 = false;
-            // LPGlobal::state.began = true;
         }
 
         if (!PlayLayer::init(level, p1, p2)) return false;
@@ -1252,8 +1343,6 @@ class $modify(HPlayLayer, PlayLayer) {
         overlay->setPosition({4,4});
         addChild(overlay, 100);
         m_fields->overlay = overlay;
-
-        LPGlobal::state.in_playlayer = true;
 
         fixBegan(0.f);
 
@@ -1279,7 +1368,7 @@ class $modify(HCreatorLayer, CreatorLayer) {
         auto sz = CCDirector::sharedDirector()->getWinSize();
 
         CCMenu *lm = CCMenu::create();
-        CCMenuItemSpriteExtra *btn = CCMenuItemSpriteExtra::create(b, b, this, menu_selector(HCreatorLayer::prInit));
+        CCMenuItemSpriteExtra *btn = CCMenuItemSpriteExtra::create(b, this, menu_selector(HCreatorLayer::prInit));
         btn->setAnchorPoint({0.25f, 0.5f});
 
         lm->setContentSize(btn->getContentSize());
@@ -1295,7 +1384,7 @@ class $modify(HCreatorLayer, CreatorLayer) {
 
 class $modify(EndLevelLayer) {
     void coinEnterFinished(CCPoint p) {
-        log::info("coinEnterFinished: {}", p);
+        if (LPDEBUG) log::info("coinEnterFinished: {}", p);
         if (LPGlobal::overlay != nullptr) {
             LPGlobal::overlay->increaseLives();
         }
@@ -1313,11 +1402,11 @@ class $modify(EndLevelLayer) {
         EndLevelLayer::coinEnterFinished(p);
     }
     void coinEnterFinishedO(CCObject *p) {
-        log::info("coinEnterFinished0: {}", p);
+        if (LPDEBUG) log::info("coinEnterFinished0: {}", p);
         EndLevelLayer::coinEnterFinishedO(p);
     }
     void playCoinEffect(float p) {
-        log::info("playCoinEffect: {}", p);
+        if (LPDEBUG) log::info("playCoinEffect: {}", p);
         EndLevelLayer::playCoinEffect(p);
     }
 };
@@ -1331,8 +1420,18 @@ class $modify(LPBlock, CCBlockLayer) {
             return;
         }
 
+        if (LPDEBUG) {
+            log::info("cost = {}", cost);
+        }
+
         LPGlobal::state.lives -= cost;
-        LevelProgressionPopup::create()->animateIn();
+
+        bool upd = Mod::get()->getSettingValue<bool>("update-diff-after-skip");
+        if (!upd) {
+            LevelProgressionPopup::create()->animateIn();
+        } else {
+            LPGlobal::showIngame(this);
+        }
     }
 
     bool init() {
@@ -1349,20 +1448,19 @@ class $modify(LPBlock, CCBlockLayer) {
         ButtonSprite *spr = ButtonSprite::create("Skip");
         spr->setScale(0.8f);
 
-        CCMenuItemSpriteExtra *i = CCMenuItemSpriteExtra::create(spr, spr, menu_selector(LPBlock::onSkip));
+        CCMenuItemSpriteExtra *i = CCMenuItemSpriteExtra::create(spr, this, menu_selector(LPBlock::onSkip));
 
         left_side->addChild(i);
         left_side->updateLayout();
 
         return true;
-
     }
 };
 
 class $modify(PauseLayer) {
     void onRestart(CCObject *sender) {
         if (LPGlobal::state.beganGameover) return;
-        PauseLayer::onRestart(sender);
+        // PauseLayer::onRestart(sender);
 
         if (LPGlobal::overlay != nullptr && LPGlobal::state.began) {
             if (LPGlobal::state.lives <= 0) {
@@ -1377,40 +1475,84 @@ class $modify(PauseLayer) {
                     pl->beginGameover();
                 }
             }
+        } else {
+            PauseLayer::onRestart(sender);
         }
     }
     void onRestartFull(CCObject *sender) {
         if (LPGlobal::state.beganGameover) return;
-        PauseLayer::onRestartFull(sender);
         if (LPGlobal::overlay != nullptr && LPGlobal::state.began) {
             if (LPGlobal::state.lives <= 0) {
                 HPlayLayer *pl = (HPlayLayer*)PlayLayer::get();
                 pl->beginGameover();
             } else {
                 // LPGlobal::overlay->decreaseLives();
-                PauseLayer::onRestart(sender);
+                PauseLayer::onRestartFull(sender);
 
                 if (LPGlobal::state.lives <= 0) {
                     HPlayLayer *pl = (HPlayLayer*)PlayLayer::get();
                     pl->beginGameover();
                 }
             }
+        } else {
+            PauseLayer::onRestartFull(sender);
         }
     }
     void onQuit(CCObject *sender) {
+        if (LPDEBUG) log::info("PauseLayer: onQuit: resetting data");
         if (Mod::get()->getSettingValue<bool>("reset-lives-after-quit")) {
             LPGlobal::state.lives = Mod::get()->getSettingValue<int>("lives");
         }
         LPGlobal::state.seed.clear();
         LPGlobal::state.seedSet = false;
+        LPGlobal::resetCurrentSeed();
         PauseLayer::onQuit(sender);
     }
 };
 
 void LevelProgressionRandPopup::onClose(CCObject *o) {
     auto s = _seedInput->getString();
-    if (s != _inputBefore && LPGlobal::curPopup != nullptr) {
+    if (LPGlobal::curPopup && s != _inputBefore) {
+        if (Mod::get()->getSettingValue<bool>("reset-previous-seed")) {
+            if (_timerScheduled) {
+                return;
+            } else {
+                LPGlobal::resetCurrentSeed();
+                LPGlobal::state.seed = s;
+                LPGlobal::seed = s;
+                Notification::create("Resetting selected seed. Please, wait...", NotificationIcon::Loading)->show();
+                _seedInput->setEnabled(false);
+                schedule(schedule_selector(LevelProgressionRandPopup::checkIfNetIsReady), 0.1f);
+                _timerScheduled = true;
+            }
+        } else {
+            leave();
+        }
+    } else {
+        if (LPGlobal::curPopup) LPGlobal::curPopup->showBeginBtn();
+        geode::Popup<LevelProgressionState*>::onClose(this);
+    }
+}
+void LevelProgressionRandPopup::checkIfNetIsReady(float) {
+    if (LPGlobal::state.net->readyToProcessNext()) {
+        unschedule(schedule_selector(LevelProgressionRandPopup::checkIfNetIsReady));
+        leave();
+    }
+}
+
+void LevelProgressionRandPopup::leave() {
+    if (LPDEBUG) log::info("ready to fetch level");
+
+    if (LPGlobal::curPopup) LPGlobal::curPopup->showBeginBtn();
+
+    auto s = _seedInput->getString();
+    LPGlobal::state.seed = s;
+    if (LPGlobal::curPopup && s != _inputBefore && LPGlobal::curPopup != nullptr) {
         LPGlobal::curPopup->fetchLevel();
     }
-    geode::Popup<LevelProgressionState*>::onClose(o);
+    geode::Popup<LevelProgressionState*>::onClose(this);
+}
+
+$execute {
+    LPDEBUG = Mod::get()->getSettingValue<bool>("debug-mode");
 }
