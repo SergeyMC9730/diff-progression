@@ -1,3 +1,5 @@
+# v1.0.3
+ * Reverted 1.0.2's FMOD change, mod now should work more stable on mobile phones
 # v1.0.2
  * Progression data is now reset when leaving from the minigame
    * Previous seed is also being reset when changing to newer one if this behaviour is enabled.

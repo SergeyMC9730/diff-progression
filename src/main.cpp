@@ -1108,9 +1108,9 @@ public:
         LPGlobal::state.lives++;
 
         auto fmod = FMODAudioEngine::get();
-        fmod->stop();
-        // fmod->stopAllMusic(true);
-        // fmod->stopAllEffects();
+        // fmod->stop();
+        fmod->stopAllMusic(true);
+        fmod->stopAllEffects();
 
         auto musman = MusicDownloadManager::sharedState();
         musman->removeMusicDownloadDelegate(this);
