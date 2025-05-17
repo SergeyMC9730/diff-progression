@@ -225,6 +225,10 @@ namespace LPGlobal {
 
     std::string seed = "";
 
+    std::string getUrl() {
+        return "https://www.dogotrigger.ru";
+    }
+
     bool applyBounceAnimate(cocos2d::CCNode *node, float power) {
         if (node == nullptr /*|| node->getActionByTag(0x1000) != nullptr || node->getActionByTag(0x2000) != nullptr*/ || power <= 0.f) {
             return false;
@@ -252,11 +256,21 @@ namespace LPGlobal {
 
     void showIngame(CCNode *n);
 
+    void fetchNews() {
+        auto st = &LPGlobal::state;
+
+        if (st->net == nullptr) return;
+
+        std::string url = LPGlobal::getUrl() + "/lp/v2/news";
+
+        if (LPDEBUG) log::info("url={}", url);
+    }
+
     void resetCurrentSeed() {
         auto st = &LPGlobal::state;
 
         if (st->net != nullptr) {
-            std::string url = "https://www.dogotrigger.ru/lp/reset";
+            std::string url = LPGlobal::getUrl() + "/lp/reset";
             url += "?user_id=" + std::to_string(GameManager::get()->m_playerUserID);
             url += "&seed=" + LPGlobal::seed;
 
@@ -513,6 +527,9 @@ protected:
     std::map<CCNode*, bool> _hideTable = {};
     bool _buttonsManuallyHidden = false;
 
+    CCMenuItemToggler *_ldmToggler;
+    bool _ldmToggled = false;
+
     int _filesTotal = 0;
     int _filesDownloaded = 0;
 public:
@@ -533,6 +550,8 @@ public:
         else log::error("_playBtn is null");
         if (_beginBtn) _beginBtn->setVisible(false);
         else log::error("_beginBtn is null");
+        if (_ldmToggler) _ldmToggler->setVisible(false);
+        else log::error("_ldmToggler is null");
         _buttonsManuallyHidden = true;
     }
     void showBeginBtn() {
@@ -556,6 +575,15 @@ public:
                 }
             } else {
                 _beginBtn->setVisible(true);
+            }
+        }
+        if (_ldmToggler) {
+            if (_hideTable.contains(_ldmToggler)) {
+                if (!_hideTable[_ldmToggler]) {
+                    _ldmToggler->setVisible(true);
+                }
+            } else {
+                _ldmToggler->setVisible(true);
             }
         }
         _buttonsManuallyHidden = false;
@@ -614,7 +642,7 @@ public:
         auto label = _widget->m_errorLabel;
         if (label) {
             std::string s = label->getString();
-            if (s.starts_with("not")) {
+            if ((s.find("not") != std::string::npos) || (s.find("Song") != std::string::npos) || (s.find("cannot") != std::string::npos) || (s.find("couldn't") != std::string::npos) || (s.find("can't") != std::string::npos) || (s.find("no") != std::string::npos)) {
                 setTitle(s);
                 unschedule(schedule_selector(LevelProgressionPopup::waitForMusicInfo));
                 return;
@@ -768,6 +796,22 @@ public:
         }
     }
 
+    void onLdmChange(CCObject *o) {
+        CCMenuItemToggler *toggler = typeinfo_cast<CCMenuItemToggler *>(o);
+		if (toggler == nullptr) return;
+
+		_ldmToggled = !toggler->isToggled();
+		if (LPDEBUG) {
+		    log::info("_ldmToggled = {}", _ldmToggled);
+		}
+
+		auto st = getState();
+		if (_currentCell && _currentCell->m_level) {
+			_currentCell->m_level->m_lowDetailModeToggled = _ldmToggled;
+			_currentCell->m_level->m_lowDetailMode = _ldmToggled;
+		}
+    }
+
     void setupLevelPage(const std::string &response) {
         if (_currentCell != nullptr) {
             _currentCell->removeMeAndCleanup();
@@ -824,6 +868,8 @@ public:
         PARSE_INT(level->m_featured, leveljson["featureScore"]);
         PARSE_INT(level->m_songID, leveljson["songID"]);
         PARSE_INT(level->m_isEpic, leveljson["isEpic"]);
+        level->m_lowDetailModeToggled = _ldmToggled;
+        level->m_lowDetailMode = _ldmToggled;
 
         level->retain();
 
@@ -907,6 +953,12 @@ public:
         _hideTable[_playBtn] = true;
         _currentCell = cell;
         _circle->setVisible(false);
+
+        if (level->m_lowDetailMode) {
+            if (LPDEBUG) {
+                log::info("LDM is available");
+            }
+        }
     }
 
     void fetchLevel() {
@@ -956,7 +1008,12 @@ public:
             d = m2[st->demon_dif];
         }
 
-        std::string url = "https://www.dogotrigger.ru/lp/get/" + d;
+        std::string url;
+        if (Mod::get()->getSavedValue<bool>("seed-comp", false)) {
+            url = LPGlobal::getUrl() + "/lp/get/" + d;
+        } else {
+            url = LPGlobal::getUrl() + "/lp/v2/get/" + d;
+        }
         url += "?user_id=" + std::to_string(GameManager::get()->m_playerUserID);
         if (st->seedSet) {
             url += "&seed=" + st->seed;
@@ -1002,9 +1059,9 @@ public:
         m->setContentSize(getRealContentSize());
         m->setAnchorPoint({0.f, 0.5});
         RowLayout *layout = RowLayout::create();
-        // layout->setAutoScale(false);
+        layout->setAutoScale(false);
         // layout->setGrowCrossAxis(false);
-        // layout->setCrossAxisOverflow(false);
+        layout->setCrossAxisOverflow(true);
         layout->setGap(10.f);
         m->setLayout(layout);
         // m_mainLayer->addChildAtPosition(m, Anchor::Center);
@@ -1024,6 +1081,36 @@ public:
         btn->setID("play-btn");
         _hideTable[btn] = true;
         _playBtn = btn;
+
+        CCArray *container = CCArray::create();
+		container->retain();
+
+		_ldmToggler = GameToolbox::createToggleButton(
+			"LDM",
+			menu_selector(LevelProgressionPopup::onLdmChange),
+			false,
+			m,
+			{50.f, 35.f},
+			this,
+			m,
+			0.7f,
+			0.5f,
+			30.f,
+			{0.f, 0.f},
+			"bigFont.fnt",
+			false,
+			1,
+			container
+		);
+		if (_ldmToggler) {
+			_ldmToggler->setID("enable-ldm-btn");
+			_hideTable[_ldmToggler] = false;
+		} else {
+			log::error("Error while creating toggler using GameToolbox::createToggleButton: object is nullptr");
+		}
+		m->updateLayout();
+
+		m->setPosition({0, m->getContentHeight() / 2 + 8.f});
 
         if (st->clickedBegin) {
             onClickBegin(nullptr);
@@ -1107,10 +1194,24 @@ public:
         LPGlobal::state.beganGameover = false;
         LPGlobal::state.lives++;
 
-        auto fmod = FMODAudioEngine::get();
-        // fmod->stop();
-        fmod->stopAllMusic(true);
-        fmod->stopAllEffects();
+        auto old_pl = PlayLayer::get();
+        if (old_pl) {
+            if (LPDEBUG) {
+                log::info("using old PlayLayer to stop music");
+            }
+            old_pl->resetAudio();
+            auto fmod = FMODAudioEngine::get();
+            fmod->unloadAllEffects();
+            fmod->enableMetering();
+        } else {
+            if (LPDEBUG) {
+                log::info("using raw FMOD calls to stop music");
+            }
+            auto fmod = FMODAudioEngine::get();
+            fmod->stopAllMusic(true);
+            fmod->unloadAllEffects();
+            fmod->enableMetering();
+        }
 
         auto musman = MusicDownloadManager::sharedState();
         musman->removeMusicDownloadDelegate(this);
@@ -1119,8 +1220,6 @@ public:
         auto transition = CCTransitionFade::create(0.5f, scene);
 
         CCDirector::sharedDirector()->replaceScene(transition);
-
-        fmod->enableMetering();
 
 #ifdef _WIN32
         CCDirector::get()->getOpenGLView()->showCursor(false);

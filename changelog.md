@@ -1,3 +1,15 @@
+# v1.0.4
+## Backend Changes
+ * Fixed randomizer bug
+   * If this change breaks existing seeds please enable "Compatibility With Old Seeds" option in mod's settings.
+ * Fixed memory leak when resetting level rand state
+ * Added endpoint for getting mod news
+ * Added endpoint for getting mod statistics
+ * Fixed invalid seed bug (NaN)
+## Frontend Changes
+ * Hopefully fix crash when going to next levels
+ * Added a checkbox for enabling/disabling LDM
+ * Added error handler for the music/SFX downloader
 # v1.0.3
  * Reverted 1.0.2's FMOD change, mod now should work more stable on mobile phones
 # v1.0.2

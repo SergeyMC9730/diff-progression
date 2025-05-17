@@ -7,7 +7,7 @@
   },
   "id": "dogotrigger.level_progression",
   "name": "Difficulty Progression",
-  "version": "v1.0.3",
+  "version": "v1.0.4",
   "developer": "dogotrigger",
   "description": "Difficulty increases as you play levels",
   "settings": {
@@ -57,6 +57,12 @@
       "default": true,
       "description": "After you change seed mod automatically resets previous one. This behaviour can be disabled.",
       "name": "Reset Previous Seed"
+    },
+    "seed-comp": {
+      "type": "bool",
+      "default": false,
+      "description": "Uses older level randomization alghorithm to preserve old seeds",
+      "name": "Compatibility With Old Seeds"
     }
   },
   "dependencies": [
